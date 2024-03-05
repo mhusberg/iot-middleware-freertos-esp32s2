@@ -38,6 +38,8 @@ bld/
 
 # Visual Studio 2017 auto generated files
 Generated\ Files/
+.DS_Store
+settings.json
 
 # MSTest test Results
 [Tt]est[Rr]esult*/
