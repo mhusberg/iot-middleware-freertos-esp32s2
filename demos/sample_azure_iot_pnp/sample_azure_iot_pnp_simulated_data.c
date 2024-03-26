@@ -6,6 +6,7 @@
 /* Standard includes. */
 #include <string.h>
 #include <stdio.h>
+#include "config.h"
 
 /* Azure JSON includes */
 #include "azure_iot_json_reader.h"
@@ -40,7 +41,7 @@
  * @brief Device values
  */
 #define sampleazureiotDEFAULT_START_TEMP_COUNT            1
-#define sampleazureiotDEFAULT_START_TEMP_CELSIUS          22.0
+#define sampleazureiotDEFAULT_START_TEMP_CELSIUS          5
 #define sampleazureiotDOUBLE_DECIMAL_PLACE_DIGITS         2
 
 /**
@@ -50,6 +51,12 @@
 #define sampleazureiotPROPERTY_SUCCESS                    "success"
 #define sampleazureiotPROPERTY_TARGET_TEMPERATURE_TEXT    "targetTemperature"
 #define sampleazureiotPROPERTY_MAX_TEMPERATURE_TEXT       "maxTempSinceLastReboot"
+#define PROPERTY_DELAY_TICK                               "sleepInterval"
+
+/**
+ * @brief Global Property Values
+ */
+extern TickType_t sampleazureiotDELAY_BETWEEN_PUBLISHES_TICKS;
 
 /**
  * @brief Telemetry values
@@ -63,7 +70,7 @@
 
 
 /* Device values */
-static double xDeviceCurrentTemperature = sampleazureiotDEFAULT_START_TEMP_CELSIUS;
+static double xDeviceSleepDelay = sampleazureiotDEFAULT_START_TEMP_CELSIUS;
 static double xDeviceMaximumTemperature = sampleazureiotDEFAULT_START_TEMP_CELSIUS;
 static double xDeviceMinimumTemperature = sampleazureiotDEFAULT_START_TEMP_CELSIUS;
 static double xDeviceTemperatureSummation = sampleazureiotDEFAULT_START_TEMP_CELSIUS;
@@ -73,6 +80,11 @@ static double xDeviceAverageTemperature = sampleazureiotDEFAULT_START_TEMP_CELSI
 /* Command buffers */
 static uint8_t ucCommandStartTimeValueBuffer[ 32 ];
 /*-----------------------------------------------------------*/
+
+unsigned int secondsToMilliseconds(double seconds);
+
+/*-----------------------------------------------------------*/
+
 
 /**
  * @brief Generate max min payload.
@@ -165,43 +177,38 @@ static void prvSkipPropertyAndValue( AzureIoTJSONReader_t * pxReader )
 /*-----------------------------------------------------------*/
 
 /**
- * @brief Update local device temperature values based on new requested temperature.
+ * @brief Update local device sleep delay tick value based on new requested value.
  */
-static void prvUpdateLocalProperties( double xNewTemperatureValue,
+static void prvUpdateLocalProperties( double xNewDeviceSleepDelay,
                                       uint32_t ulPropertyVersion,
-                                      bool * pxOutMaxTempChanged )
+                                      bool * pxOutSleepDelayChanged )
 {
-    *pxOutMaxTempChanged = false;
-    xDeviceCurrentTemperature = xNewTemperatureValue;
+    *pxOutSleepDelayChanged = false;
+    
 
-    /* Update maximum or minimum temperatures. */
-    if( xDeviceCurrentTemperature > xDeviceMaximumTemperature )
+    /* Check if value differs from current. */
+    if( xNewDeviceSleepDelay != xDeviceSleepDelay )
     {
-        xDeviceMaximumTemperature = xDeviceCurrentTemperature;
-        *pxOutMaxTempChanged = true;
+        xDeviceSleepDelay = xNewDeviceSleepDelay;
+        *pxOutSleepDelayChanged = true;
+        sleepInterval = pdMS_TO_TICKS( secondsToMilliseconds( xNewDeviceSleepDelay ) );
+        LogInfo( ( "Client updated desired sleep delay variables locally." ) );
     }
-    else if( xDeviceCurrentTemperature < xDeviceMinimumTemperature )
+    else
     {
-        xDeviceMinimumTemperature = xDeviceCurrentTemperature;
+        LogInfo( ( "Same sleep interval as before, no changes needed." ) );
     }
 
-    /* Calculate the new average temperature. */
-    ulDeviceTemperatureCount++;
-    xDeviceTemperatureSummation += xDeviceCurrentTemperature;
-    xDeviceAverageTemperature = xDeviceTemperatureSummation / ulDeviceTemperatureCount;
+    LogInfo( ( "Current sleep interval: %2f", xDeviceSleepDelay ) );
 
-    LogInfo( ( "Client updated desired temperature variables locally." ) );
-    LogInfo( ( "Current Temperature: %2f", xDeviceCurrentTemperature ) );
-    LogInfo( ( "Maximum Temperature: %2f", xDeviceMaximumTemperature ) );
-    LogInfo( ( "Minimum Temperature: %2f", xDeviceMinimumTemperature ) );
-    LogInfo( ( "Average Temperature: %2f", xDeviceAverageTemperature ) );
 }
 /*-----------------------------------------------------------*/
 
+
 /**
- * @brief Gets the reported properties payload with the maximum temperature value.
+ * @brief Gets the reported properties payload with the sleep delay value.
  */
-static uint32_t prvGetNewMaxTemp( double xUpdatedTemperature,
+static uint32_t prvGetSleepDelayProperty( double xUpdatedSleepDelay,
                                   uint8_t * ucReportedPropertyPayloadBuffer,
                                   uint32_t ulReportedPropertyPayloadBufferSize )
 {
@@ -209,18 +216,18 @@ static uint32_t prvGetNewMaxTemp( double xUpdatedTemperature,
     AzureIoTJSONWriter_t xWriter;
     int32_t lBytesWritten;
 
-    /* Initialize the JSON writer with the buffer to which we will write the payload with the new temperature. */
+    /* Initialize the JSON writer with the buffer to which we will write the payload with the new sleep delay value. */
     xResult = AzureIoTJSONWriter_Init( &xWriter, ucReportedPropertyPayloadBuffer, ulReportedPropertyPayloadBufferSize );
     configASSERT( xResult == eAzureIoTSuccess );
 
     xResult = AzureIoTJSONWriter_AppendBeginObject( &xWriter );
     configASSERT( xResult == eAzureIoTSuccess );
 
-    xResult = AzureIoTJSONWriter_AppendPropertyName( &xWriter, ( const uint8_t * ) sampleazureiotPROPERTY_MAX_TEMPERATURE_TEXT,
-                                                     sizeof( sampleazureiotPROPERTY_MAX_TEMPERATURE_TEXT ) - 1 );
+    xResult = AzureIoTJSONWriter_AppendPropertyName( &xWriter, ( const uint8_t * ) PROPERTY_DELAY_TICK,
+                                                     sizeof( PROPERTY_DELAY_TICK ) - 1 );
     configASSERT( xResult == eAzureIoTSuccess );
 
-    xResult = AzureIoTJSONWriter_AppendDouble( &xWriter, xUpdatedTemperature, sampleazureiotDOUBLE_DECIMAL_PLACE_DIGITS );
+    xResult = AzureIoTJSONWriter_AppendDouble( &xWriter, xUpdatedSleepDelay, sampleazureiotDOUBLE_DECIMAL_PLACE_DIGITS );
     configASSERT( xResult == eAzureIoTSuccess );
 
     xResult = AzureIoTJSONWriter_AppendEndObject( &xWriter );
@@ -234,13 +241,13 @@ static uint32_t prvGetNewMaxTemp( double xUpdatedTemperature,
 /*-----------------------------------------------------------*/
 
 /**
- * @brief Generate an update for the device's target temperature property online,
+ * @brief Generate an update for the device's target sleep delay tick cycle property online,
  *        acknowledging the update from the IoT Hub.
  */
-static uint32_t prvGenerateAckForIncomingTemperature( double xUpdatedTemperature,
-                                                      uint32_t ulVersion,
-                                                      uint8_t * pucResponseBuffer,
-                                                      uint32_t ulResponseBufferSize )
+static uint32_t prvGenerateAckForIncomingSleepDelay( double xUpdatedSleepDelay,
+                                                     uint32_t ulVersion,
+                                                     uint8_t * pucResponseBuffer,
+                                                     uint32_t ulResponseBufferSize )
 {
     AzureIoTResult_t xResult;
     AzureIoTJSONWriter_t xWriter;
@@ -255,15 +262,15 @@ static uint32_t prvGenerateAckForIncomingTemperature( double xUpdatedTemperature
 
     xResult = AzureIoTHubClientProperties_BuilderBeginResponseStatus( &xAzureIoTHubClient,
                                                                       &xWriter,
-                                                                      ( const uint8_t * ) sampleazureiotPROPERTY_TARGET_TEMPERATURE_TEXT,
-                                                                      sizeof( sampleazureiotPROPERTY_TARGET_TEMPERATURE_TEXT ) - 1,
+                                                                      ( const uint8_t * ) PROPERTY_DELAY_TICK,
+                                                                      sizeof( PROPERTY_DELAY_TICK ) - 1,
                                                                       sampleazureiotPROPERTY_STATUS_SUCCESS,
                                                                       ulVersion,
                                                                       ( const uint8_t * ) sampleazureiotPROPERTY_SUCCESS,
                                                                       sizeof( sampleazureiotPROPERTY_SUCCESS ) - 1 );
     configASSERT( xResult == eAzureIoTSuccess );
 
-    xResult = AzureIoTJSONWriter_AppendDouble( &xWriter, xUpdatedTemperature, sampleazureiotDOUBLE_DECIMAL_PLACE_DIGITS );
+    xResult = AzureIoTJSONWriter_AppendDouble( &xWriter, xUpdatedSleepDelay, sampleazureiotDOUBLE_DECIMAL_PLACE_DIGITS );
     configASSERT( xResult == eAzureIoTSuccess );
 
     xResult = AzureIoTHubClientProperties_BuilderEndResponseStatus( &xAzureIoTHubClient,
@@ -285,7 +292,7 @@ static uint32_t prvGenerateAckForIncomingTemperature( double xUpdatedTemperature
  */
 static AzureIoTResult_t prvProcessProperties( AzureIoTHubClientPropertiesResponse_t * pxMessage,
                                               AzureIoTHubClientPropertyType_t xPropertyType,
-                                              double * pxOutTemperature,
+                                              double * pxOutSleepDelay,
                                               uint32_t * ulOutVersion )
 {
     AzureIoTResult_t xResult;
@@ -293,7 +300,7 @@ static AzureIoTResult_t prvProcessProperties( AzureIoTHubClientPropertiesRespons
     const uint8_t * pucComponentName = NULL;
     uint32_t ulComponentNameLength = 0;
 
-    *pxOutTemperature = 0.0;
+    *pxOutSleepDelay = 0.0;
 
     xResult = AzureIoTJSONReader_Init( &xReader, pxMessage->pvMessagePayload, pxMessage->ulPayloadLength );
     configASSERT( xResult == eAzureIoTSuccess );
@@ -323,14 +330,14 @@ static AzureIoTResult_t prvProcessProperties( AzureIoTHubClientPropertiesRespons
                 prvSkipPropertyAndValue( &xReader );
             }
             else if( AzureIoTJSONReader_TokenIsTextEqual( &xReader,
-                                                          ( const uint8_t * ) sampleazureiotPROPERTY_TARGET_TEMPERATURE_TEXT,
-                                                          sizeof( sampleazureiotPROPERTY_TARGET_TEMPERATURE_TEXT ) - 1 ) )
+                                                          ( const uint8_t * ) PROPERTY_DELAY_TICK,
+                                                          sizeof( PROPERTY_DELAY_TICK ) - 1 ) )
             {
                 xResult = AzureIoTJSONReader_NextToken( &xReader );
                 configASSERT( xResult == eAzureIoTSuccess );
 
                 /* Get desired temperature */
-                xResult = AzureIoTJSONReader_GetTokenDouble( &xReader, pxOutTemperature );
+                xResult = AzureIoTJSONReader_GetTokenDouble( &xReader, pxOutSleepDelay );
 
                 if( xResult != eAzureIoTSuccess )
                 {
@@ -374,19 +381,22 @@ void vHandleWritableProperties( AzureIoTHubClientPropertiesResponse_t * pxMessag
                                 uint32_t * pulWritablePropertyResponseBufferLength )
 {
     AzureIoTResult_t xResult;
-    double xIncomingTemperature;
+    double xIncomingSleepDelay;
     uint32_t ulVersion;
     bool xWasMaxTemperatureChanged = false;
 
-    xResult = prvProcessProperties( pxMessage, eAzureIoTHubClientPropertyWritable, &xIncomingTemperature, &ulVersion );
+    xResult = prvProcessProperties( pxMessage, eAzureIoTHubClientPropertyWritable, &xIncomingSleepDelay, &ulVersion );
+
+    LogWarn ( ( "Incoming sleep interval: %f\n", xIncomingSleepDelay ) );
 
     if( xResult == eAzureIoTSuccess )
     {
-        prvUpdateLocalProperties( xIncomingTemperature, ulVersion, &xWasMaxTemperatureChanged );
-        *pulWritablePropertyResponseBufferLength = prvGenerateAckForIncomingTemperature(
-            xIncomingTemperature,
-            ulVersion,
-            pucWritablePropertyResponseBuffer,
+        prvUpdateLocalProperties( xIncomingSleepDelay, ulVersion, &xWasMaxTemperatureChanged );
+        *pulWritablePropertyResponseBufferLength = prvGenerateAckForIncomingSleepDelay
+    (
+          xIncomingSleepDelay,
+           ulVersion,
+           pucWritablePropertyResponseBuffer,
             ulWritablePropertyResponseBufferSize );
     }
     else
@@ -473,7 +483,7 @@ uint32_t ulCreateTelemetry( uint8_t * pucTelemetryData,
                             uint32_t * ulTelemetryDataLength )
 {
     int result = snprintf( ( char * ) pucTelemetryData, ulTelemetryDataSize,
-                           sampleazureiotMESSAGE, xDeviceCurrentTemperature );
+                           sampleazureiotMESSAGE, xDeviceSleepDelay );
 
     if( ( result >= 0 ) && ( result < ulTelemetryDataSize ) )
     {
@@ -490,12 +500,21 @@ uint32_t ulCreateTelemetry( uint8_t * pucTelemetryData,
 /*-----------------------------------------------------------*/
 
 /**
+ * @brief Converts seconds to milliseconds.
+ */
+unsigned int secondsToMilliseconds(double seconds) 
+{
+    return (unsigned int)(seconds * 1000.0);
+}
+/*-----------------------------------------------------------*/
+
+/**
  * @brief Implements the sample interface for generating reported properties payload.
  */
 uint32_t ulCreateReportedPropertiesUpdate( uint8_t * pucPropertiesData,
                                            uint32_t ulPropertiesDataSize )
 {
-    return prvGetNewMaxTemp( xDeviceCurrentTemperature, pucPropertiesData, ulPropertiesDataSize );
+    return prvGetSleepDelayProperty( xDeviceSleepDelay, pucPropertiesData, ulPropertiesDataSize );
 }
 
 /*-----------------------------------------------------------*/

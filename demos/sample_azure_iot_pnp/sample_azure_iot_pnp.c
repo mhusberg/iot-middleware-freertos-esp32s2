@@ -4,6 +4,7 @@
 /* Standard includes. */
 #include <string.h>
 #include <stdio.h>
+#include "config.h"
 
 /* Kernel includes. */
 #include "FreeRTOS.h"
@@ -36,6 +37,10 @@
 /* Data Interface Definition */
 #include "sample_azure_iot_pnp_data_if.h"
 
+/* Driver Specific includes */
+#include "driver/gpio.h"
+#include "DHT22.h"
+
 /*-----------------------------------------------------------*/
 
 /* Compile time error for undefined configs. */
@@ -59,6 +64,10 @@
     #error "Please define one auth democonfigDEVICE_SYMMETRIC_KEY or democonfigCLIENT_CERTIFICATE_PEM in demo_config.h."
 #endif
 /*-----------------------------------------------------------*/
+/**
+ * @brief The Telemetry message published in this example.
+ */
+#define DHTsensorGPIOpin                                      ( 4 )
 
 /**
  * @brief The maximum number of retries for network operation with server.
@@ -105,7 +114,10 @@
  * Note that the process loop also has a timeout, so the total time between
  * publishes is the sum of the two delays.
  */
-#define sampleazureiotDELAY_BETWEEN_PUBLISHES_TICKS           ( pdMS_TO_TICKS( 2000U ) )
+const TickType_t sampleazureiotDELAY_BETWEEN_PUBLISHES_TICKS = ( pdMS_TO_TICKS( 4000U ) );
+TickType_t sleepInterval = ( pdMS_TO_TICKS( 5000U ) );
+
+// #define sampleazureiotDELAY_BETWEEN_PUBLISHES_TICKS           ( pdMS_TO_TICKS( 2000U ) )
 
 /**
  * @brief Transport timeout in milliseconds for transport send and receive.
@@ -203,6 +215,8 @@ static uint32_t prvConnectToServerWithBackoffRetries( const char * pcHostName,
                                                       NetworkCredentials_t * pxNetworkCredentials,
                                                       NetworkContext_t * pxNetworkContext );
 /*-----------------------------------------------------------*/
+
+char* getTempAndHumid();
 
 /**
  * @brief Static buffer used to hold MQTT messages being sent and received.
@@ -421,6 +435,9 @@ static void prvAzureDemoTask( void * pvParameters )
                 configASSERT( xResult == eAzureIoTSuccess );
             #endif /* democonfigDEVICE_SYMMETRIC_KEY */
 
+            LogInfo ( ( "sleepInterval: %lu", sleepInterval ) );
+
+
             /* Sends an MQTT Connect packet over the already established TLS connection,
              * and waits for connection acknowledgment (CONNACK) packet. */
             LogInfo( ( "Creating an MQTT connection to %s.\r\n", pucIotHubHostname ) );
@@ -442,20 +459,31 @@ static void prvAzureDemoTask( void * pvParameters )
             xResult = AzureIoTHubClient_RequestPropertiesAsync( &xAzureIoTHubClient );
             configASSERT( xResult == eAzureIoTSuccess );
 
+            /* Set temperature and humidity sensor read pin */
+            LogInfo( ( "DHT22 sensor read pin: %u", DHTsensorGPIOpin ) );
+            setDHTgpio( DHTsensorGPIOpin );
+
             /* Publish messages with QoS1, send and process Keep alive messages. */
             for( ; xAzureSample_IsConnectedToInternet(); )
             {
                 /* Hook for sending Telemetry */
-                if( ( ulCreateTelemetry( ucScratchBuffer, sizeof( ucScratchBuffer ), &ulScratchBufferLength ) == 0 ) &&
-                    ( ulScratchBufferLength > 0 ) )
-                {
-                    xResult = AzureIoTHubClient_SendTelemetry( &xAzureIoTHubClient,
-                                                               ucScratchBuffer, ulScratchBufferLength,
-                                                               NULL, eAzureIoTHubMessageQoS1, NULL );
-                    configASSERT( xResult == eAzureIoTSuccess );
-                }
+                char *tempHumid = getTempAndHumid();
+
+                ulScratchBufferLength = snprintf( ( char * ) ucScratchBuffer, sizeof( ucScratchBuffer ),
+                                                  tempHumid, 1 );
+
+                /* Free dynamically allocated memory */
+                free(tempHumid); 
+                
+                LogInfo ( ( "ucScratchBuffer: %s", ucScratchBuffer ) );
+
+                xResult = AzureIoTHubClient_SendTelemetry( &xAzureIoTHubClient,
+                                                           ucScratchBuffer, ulScratchBufferLength,
+                                                           NULL, eAzureIoTHubMessageQoS1, NULL );
+                configASSERT( xResult == eAzureIoTSuccess );
 
                 /* Hook for sending update to reported properties */
+                LogInfo ( ( "ucReportedPropertiesUpdate: %s", ucReportedPropertiesUpdate ) );
                 ulReportedPropertiesUpdateLength = ulCreateReportedPropertiesUpdate( ucReportedPropertiesUpdate, sizeof( ucReportedPropertiesUpdate ) );
 
                 if( ulReportedPropertiesUpdateLength > 0 )
@@ -470,8 +498,9 @@ static void prvAzureDemoTask( void * pvParameters )
                 configASSERT( xResult == eAzureIoTSuccess );
 
                 /* Leave Connection Idle for some time. */
+                LogInfo ( ( "sleepInterval: %lu", sleepInterval ) );
                 LogInfo( ( "Keeping Connection Idle...\r\n\r\n" ) );
-                vTaskDelay( sampleazureiotDELAY_BETWEEN_PUBLISHES_TICKS );
+                vTaskDelay( sleepInterval );
             }
 
             if( xAzureSample_IsConnectedToInternet() )
@@ -675,6 +704,26 @@ static uint32_t prvConnectToServerWithBackoffRetries( const char * pcHostName,
 
     return xNetworkStatus == eTLSTransportSuccess ? 0 : 1;
 }
+/*-----------------------------------------------------------*/
+/*
+* @brief Temperature and humidity sensor implementation
+*/
+
+char* getTempAndHumid()
+{
+    int ret = readDHT();
+    errorHandler( ret );
+    
+    float temperature = getTemperature();
+    float humidity = getHumidity();
+
+    char *tempHumidString = (char *)malloc(100 * sizeof(char));
+
+    sprintf(tempHumidString, "{ \"temperature\": \"%.2f\", \"humidity\": \"%.2f\" }", temperature, humidity);
+
+    return tempHumidString;
+}
+
 /*-----------------------------------------------------------*/
 
 /*

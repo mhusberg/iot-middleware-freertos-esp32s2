@@ -20,6 +20,8 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "nvs_flash.h"
+#include "azure_iot_hub_client.h"
+
 /*-----------------------------------------------------------*/
 
 #define NR_OF_IP_ADDRESSES_TO_WAIT_FOR     1
@@ -330,3 +332,4 @@ uint64_t ullGetUnixTime( void )
     return now;
 }
 /*-----------------------------------------------------------*/
+

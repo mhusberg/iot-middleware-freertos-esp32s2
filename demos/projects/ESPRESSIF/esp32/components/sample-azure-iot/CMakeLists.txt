@@ -55,11 +55,11 @@ if (DEFINED CONFIG_ESP_TLS_USE_SECURE_ELEMENT)
     idf_component_register(
         SRCS ${COMPONENT_SOURCES}
         INCLUDE_DIRS ${COMPONENT_INCLUDE_DIRS}
-        REQUIRES mbedtls tcp_transport esp-cryptoauthlib coreMQTT azure-sdk-for-c azure-iot-middleware-freertos)
+        REQUIRES mbedtls tcp_transport esp-cryptoauthlib coreMQTT azure-sdk-for-c azure-iot-middleware-freertos esp_driver_gpio DHT22)
 else()
     idf_component_register(
         SRCS ${COMPONENT_SOURCES}
         INCLUDE_DIRS ${COMPONENT_INCLUDE_DIRS}
-        REQUIRES mbedtls tcp_transport coreMQTT azure-sdk-for-c azure-iot-middleware-freertos)
+        REQUIRES mbedtls tcp_transport coreMQTT azure-sdk-for-c azure-iot-middleware-freertos esp_driver_gpio DHT22)
 endif()
 
